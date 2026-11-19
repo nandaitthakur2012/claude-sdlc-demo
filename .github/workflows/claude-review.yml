@@ -1,0 +1,104 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+  workflow_call:
+    inputs:
+      pr_number:
+        type: number
+        required: true
+    outputs:
+      verdict:
+        description: "approve | request_changes"
+        value: ${{ jobs.review.outputs.verdict }}
+
+jobs:
+  review:
+    name: Claude reviews the PR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    env:
+      PR: ${{ inputs.pr_number || github.event.pull_request.number }}
+      CLAUDE_MODEL: claude-sonnet-5-5
+    outputs:
+      verdict: ${{ steps.post.outputs.verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ inputs.pr_number || github.event.pull_request.number }}/head
+
+      - name: Collect PR context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .sdlc
+          gh pr view "$PR" --json number,title,body,headRefOid > .sdlc/pr.json
+          gh pr diff "$PR" > .sdlc/pr.diff
+
+      - name: Claude reviews the diff
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are a meticulous senior reviewer. Review the pull request described in .sdlc/pr.json.
+            The unified diff is in .sdlc/pr.diff; the PR branch is checked out, so read surrounding code as needed.
+            Follow the conventions in CLAUDE.md. Focus on: correctness and bugs, missing tests for acceptance
+            criteria, accessibility, security, and readability. Ignore pure style nitpicks.
+
+            Return:
+            - verdict: "approve" if it is safe to merge (minor suggestions are OK), otherwise "request_changes".
+            - summary: GitHub markdown, 3-8 bullet points covering what you checked and what you found.
+            - comments: up to 6 specific findings, each anchored to a line ADDED in the diff
+              (path relative to repo root, line number in the new file), with severity "blocker" | "suggestion" | "nit".
+          claude_args: |
+            --model ${{ env.CLAUDE_MODEL }}
+            --max-turns 20
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["approve","request_changes"]},"summary":{"type":"string"},"comments":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer"},"severity":{"type":"string"},"body":{"type":"string"}},"required":["path","line","body"]}}},"required":["verdict","summary"]}'
+
+      - name: Publish review on the PR
+        id: post
+        uses: actions/github-script@v7
+        env:
+          OUT: ${{ steps.claude.outputs.structured_output }}
+        with:
+          script: |
+            const fs = require('fs');
+            const out = JSON.parse(process.env.OUT || '{}');
+            const pr = Number(process.env.PR);
+            const { owner, repo } = context.repo;
+            const head = JSON.parse(fs.readFileSync('.sdlc/pr.json', 'utf8')).headRefOid;
+            const verdict = out.verdict === 'approve' ? 'approve' : 'request_changes';
+
+            const header = verdict === 'approve'
+              ? '## ✅ Claude review: **APPROVED**'
+              : '## 🔁 Claude review: **CHANGES REQUESTED**';
+            const footer = verdict === 'approve'
+              ? '\n\n> Ready for a human to approve & merge. Merging auto-deploys to GitHub Pages.'
+              : '\n\n> Comment `@claude please address the review` to let Claude fix these, or push a fix yourself.';
+            const body = `${header}\n\n${out.summary || '_No summary returned._'}${footer}`;
+
+            const comments = (out.comments || [])
+              .filter(c => c.path && Number.isInteger(c.line))
+              .map(c => ({ path: c.path, line: c.line, side: 'RIGHT', body: `**${c.severity || 'suggestion'}**: ${c.body}` }));
+
+            try {
+              await github.rest.pulls.createReview({ owner, repo, pull_number: pr, commit_id: head, event: 'COMMENT', body, comments });
+            } catch (e) {
+              core.warning(`Inline comments rejected (${e.message}); posting them in the review body instead.`);
+              const list = comments.map(c => `- \`${c.path}:${c.line}\` ${c.body}`).join('\n');
+              await github.rest.pulls.createReview({ owner, repo, pull_number: pr, commit_id: head, event: 'COMMENT', body: list ? `${body}\n\n### Findings\n${list}` : body });
+            }
+
+            for (const name of ['claude-approved', 'changes-requested']) {
+              await github.rest.issues.removeLabel({ owner, repo, issue_number: pr, name }).catch(() => {});
+            }
+            await github.rest.issues.addLabels({ owner, repo, issue_number: pr,
+              labels: [verdict === 'approve' ? 'claude-approved' : 'changes-requested'] });
+            core.setOutput('verdict', verdict);

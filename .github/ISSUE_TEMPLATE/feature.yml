@@ -1,0 +1,22 @@
+name: "✨ Feature request (Claude builds it)"
+description: Describe a feature. Labeling it `feature` starts the autonomous SDLC pipeline.
+labels: ["feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Submitting this issue starts the **🤖 SDLC Pipeline**: Claude plans, implements, tests and reviews it, then opens a PR for you to approve.
+  - type: textarea
+    id: what
+    attributes:
+      label: What should it do?
+      placeholder: As a user, I want to … so that …
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] …
+        - [ ] …

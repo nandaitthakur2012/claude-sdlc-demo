@@ -1,0 +1,254 @@
+# ---------------------------------------------------------------------------
+#  🤖 Autonomous SDLC pipeline
+#
+#  Issue labeled `feature`
+#     → 📋 Plan       Claude writes an implementation spec on the issue
+#     → 🛠️ Implement  Claude writes code + tests, self-heals failing checks, opens a PR
+#     → ✅ CI         lint · test · build on the PR branch
+#     → 🔍 Review     a separate Claude pass reviews the diff (inline comments + verdict)
+#     → 🙋 Human      you approve & merge the PR
+#     → 🚀 Deploy     deploy.yml ships main to GitHub Pages and reports back on the issue
+# ---------------------------------------------------------------------------
+name: "🤖 SDLC Pipeline"
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number to implement
+        required: true
+
+concurrency:
+  group: sdlc-issue-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+env:
+  ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+  CLAUDE_MODEL: claude-sonnet-5-5
+  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+jobs:
+  # -------------------------------------------------------------------------
+  plan:
+    name: "📋 Plan"
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'feature'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      spec: ${{ steps.post.outputs.spec }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch issue & announce
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .sdlc
+          gh issue view "$ISSUE_NUMBER" --json number,title,body > .sdlc/issue.json
+          gh issue edit "$ISSUE_NUMBER" --add-label in-progress --remove-label needs-human || true
+          gh issue comment "$ISSUE_NUMBER" --body "🤖 **Claude picked this up.** Planning → implementing → testing → reviewing. [Watch the pipeline]($RUN_URL)"
+
+      - name: Claude writes the spec
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are the tech lead of this repository.
+            Read CLAUDE.md, then the GitHub issue in .sdlc/issue.json, and explore the code as needed.
+            Write a concise implementation spec for the requested feature (max ~250 words, GitHub markdown) with sections:
+            **Summary**, **Acceptance criteria** (markdown checklist), **Files to change**, **Test plan**.
+            Do NOT modify any files. Return the spec in the `spec` field.
+          claude_args: |
+            --model ${{ env.CLAUDE_MODEL }}
+            --max-turns 15
+            --allowedTools "Read,Glob,Grep"
+            --json-schema '{"type":"object","properties":{"spec":{"type":"string"}},"required":["spec"]}'
+
+      - name: Post spec to the issue
+        id: post
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          node -e 'const o=JSON.parse(process.env.OUT||"{}");process.stdout.write("## 📋 Implementation spec\n_Written by Claude_\n\n"+(o.spec||"(no spec returned)"))' > .sdlc/spec.md
+          gh issue comment "$ISSUE_NUMBER" --body-file .sdlc/spec.md
+          {
+            echo 'spec<<SPEC_EOF'
+            cat .sdlc/spec.md
+            echo
+            echo 'SPEC_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+  # -------------------------------------------------------------------------
+  implement:
+    name: "🛠️ Implement"
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      branch: ${{ steps.prep.outputs.branch }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Prepare working branch
+        id: prep
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPEC: ${{ needs.plan.outputs.spec }}
+        run: |
+          mkdir -p .sdlc
+          echo ".sdlc/" >> .git/info/exclude
+          gh issue view "$ISSUE_NUMBER" --json number,title,body > .sdlc/issue.json
+          printf '%s\n' "$SPEC" > .sdlc/spec.md
+          BRANCH="claude/issue-${ISSUE_NUMBER}-${GITHUB_RUN_ID}"
+          git checkout -b "$BRANCH"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Claude implements the feature
+        id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            You are a senior engineer on this repository.
+            Implement the GitHub issue in .sdlc/issue.json following the spec in .sdlc/spec.md and the rules in CLAUDE.md.
+            - Make the code changes and add or update Vitest tests that cover the acceptance criteria.
+            - Run `npm run lint`, `npm test` and `npm run build`, and fix anything that fails.
+            - Do NOT run git commands, commit, push or open PRs. The pipeline does that.
+            - Do NOT add new npm dependencies.
+            Finish by returning `pr_title` (Conventional Commits style, e.g. "feat: add dark mode toggle")
+            and `pr_body` (GitHub markdown: ## Summary, ## Changes, ## Testing).
+          claude_args: |
+            --model ${{ env.CLAUDE_MODEL }}
+            --max-turns 40
+            --permission-mode acceptEdits
+            --allowedTools "Read,Glob,Grep,Edit,MultiEdit,Write,Bash(npm test),Bash(npm run lint),Bash(npm run build)"
+            --json-schema '{"type":"object","properties":{"pr_title":{"type":"string"},"pr_body":{"type":"string"}},"required":["pr_title","pr_body"]}'
+
+      - name: Verify (lint · test · build)
+        id: verify
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          (npm run lint && npm test && npm run build) 2>&1 | tee .sdlc/verify.log
+
+      - name: "🩹 Claude self-heals failing checks"
+        if: steps.verify.outcome == 'failure'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: |
+            The quality checks failed after implementing the feature in .sdlc/issue.json.
+            The full log is in .sdlc/verify.log. Diagnose the root cause and fix the code so that
+            `npm run lint`, `npm test` and `npm run build` all pass.
+            Never delete, skip or weaken tests to make them pass. Do NOT run git commands.
+          claude_args: |
+            --model ${{ env.CLAUDE_MODEL }}
+            --max-turns 25
+            --permission-mode acceptEdits
+            --allowedTools "Read,Glob,Grep,Edit,MultiEdit,Write,Bash(npm test),Bash(npm run lint),Bash(npm run build)"
+
+      - name: Verify again after self-heal
+        if: steps.verify.outcome == 'failure'
+        run: npm run lint && npm test && npm run build
+
+      - name: Commit, push & open PR
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT: ${{ steps.claude.outputs.structured_output }}
+          BRANCH: ${{ steps.prep.outputs.branch }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::Claude made no changes"
+            exit 1
+          fi
+          ISSUE_TITLE=$(gh issue view "$ISSUE_NUMBER" --json title -q .title)
+          TITLE=$(node -e 'const o=JSON.parse(process.env.OUT||"{}");process.stdout.write(o.pr_title||("feat: "+process.argv[1]))' "$ISSUE_TITLE")
+          node -e 'const o=JSON.parse(process.env.OUT||"{}");process.stdout.write(o.pr_body||"Implements the linked issue.")' > .sdlc/pr.md
+          printf '\n\nCloses #%s\n\n---\n🤖 Implemented autonomously by Claude via the [SDLC pipeline](%s).\n' "$ISSUE_NUMBER" "$RUN_URL" >> .sdlc/pr.md
+          git commit -m "$TITLE" -m "Closes #$ISSUE_NUMBER"
+          git push -u origin "$BRANCH"
+          URL=$(gh pr create --base main --head "$BRANCH" --title "$TITLE" --body-file .sdlc/pr.md --label claude)
+          NUM="${URL##*/}"
+          echo "pr_number=$NUM" >> "$GITHUB_OUTPUT"
+          gh issue comment "$ISSUE_NUMBER" --body "🔀 Claude opened PR #$NUM. Running CI and code review next…"
+
+  # -------------------------------------------------------------------------
+  ci:
+    name: "✅ CI"
+    needs: implement
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.implement.outputs.branch }}
+
+  # -------------------------------------------------------------------------
+  review:
+    name: "🔍 Review"
+    needs: [implement, ci]
+    uses: ./.github/workflows/claude-review.yml
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    with:
+      pr_number: ${{ fromJSON(needs.implement.outputs.pr_number) }}
+    secrets: inherit
+
+  # -------------------------------------------------------------------------
+  handoff:
+    name: "🙋 Hand off to human"
+    needs: [implement, review]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report status on the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.implement.outputs.pr_number }}
+          VERDICT: ${{ needs.review.outputs.verdict }}
+        run: |
+          if [ "$VERDICT" = "approve" ]; then
+            MSG="✅ CI passed and **Claude's review approved** PR #$PR. Waiting for a human to approve and merge. Merging deploys to production automatically."
+          else
+            MSG="🔁 CI passed but **Claude's review requested changes** on PR #$PR. Comment \`@claude please address the review\` on the PR to let Claude fix it, or fix it yourself."
+          fi
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$MSG"
+
+  # -------------------------------------------------------------------------
+  on-failure:
+    name: "🚨 Escalate"
+    needs: [plan, implement, ci, review]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --add-label needs-human || true
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "🚨 The automated pipeline could not finish this one. A human needs to take a look: [pipeline run]($RUN_URL)"
