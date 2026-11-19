@@ -45,4 +45,42 @@ describe('App', () => {
     expect(saved).toHaveLength(1);
     expect(saved[0].title).toBe('Keep me');
   });
+
+  it('adds a task with a due date and resets the input', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.type(screen.getByLabelText('New task'), 'Pay rent');
+    await user.type(screen.getByLabelText('Due date'), '2099-12-01');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    expect(screen.getByText('Due 2099-12-01')).toBeInTheDocument();
+    expect(screen.getByLabelText('Due date')).toHaveValue('');
+    expect(screen.queryByText(/Overdue/)).not.toBeInTheDocument();
+  });
+
+  it('marks unfinished past-due tasks as overdue, not done ones', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      'taskflow.tasks',
+      JSON.stringify([
+        { id: '1', title: 'Late', done: false, createdAt: 1, dueDate: '2000-01-01' },
+        { id: '2', title: 'Finished', done: true, createdAt: 2, dueDate: '2000-01-01' },
+      ]),
+    );
+    render(<App />);
+    expect(screen.getByText('Late').closest('li')).toHaveClass('overdue');
+    expect(screen.getByText(/Due 2000-01-01 \(Overdue\)/)).toBeInTheDocument();
+    expect(screen.getByText('Finished').closest('li')).not.toHaveClass('overdue');
+    await user.click(screen.getAllByRole('checkbox')[0]);
+    expect(screen.getByText('Late').closest('li')).not.toHaveClass('overdue');
+  });
+
+  it('loads legacy tasks without a due date', () => {
+    localStorage.setItem(
+      'taskflow.tasks',
+      JSON.stringify([{ id: '1', title: 'Old', done: false, createdAt: 1 }]),
+    );
+    render(<App />);
+    expect(screen.getByText('Old')).toBeInTheDocument();
+    expect(screen.queryByText(/Due /)).not.toBeInTheDocument();
+  });
 });

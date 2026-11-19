@@ -5,6 +5,7 @@ import {
   countRemaining,
   deleteTask,
   filterTasks,
+  isOverdue,
   toggleTask,
   type Filter,
   type Task,
@@ -16,14 +17,16 @@ const FILTERS: Filter[] = ['all', 'active', 'done'];
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => loadTasks());
   const [title, setTitle] = useState('');
+  const [dueDate, setDueDate] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
 
   useEffect(() => saveTasks(tasks), [tasks]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setTasks((prev) => addTask(prev, title));
+    setTasks((prev) => addTask(prev, title, dueDate));
     setTitle('');
+    setDueDate('');
   }
 
   const visible = filterTasks(tasks, filter);
@@ -44,6 +47,12 @@ export default function App() {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
         />
+        <input
+          type="date"
+          aria-label="Due date"
+          value={dueDate}
+          onChange={(e) => setDueDate(e.target.value)}
+        />
         <button type="submit">Add</button>
       </form>
 
@@ -61,25 +70,35 @@ export default function App() {
       </nav>
 
       <ul className="task-list">
-        {visible.map((t) => (
-          <li key={t.id} className={t.done ? 'done' : ''}>
-            <label>
-              <input
-                type="checkbox"
-                checked={t.done}
-                onChange={() => setTasks((p) => toggleTask(p, t.id))}
-              />
-              <span>{t.title}</span>
-            </label>
-            <button
-              className="delete"
-              aria-label={`Delete ${t.title}`}
-              onClick={() => setTasks((p) => deleteTask(p, t.id))}
-            >
-              ×
-            </button>
-          </li>
-        ))}
+        {visible.map((t) => {
+          const overdue = isOverdue(t);
+          const cls = [t.done ? 'done' : '', overdue ? 'overdue' : ''].filter(Boolean).join(' ');
+          return (
+            <li key={t.id} className={cls}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={t.done}
+                  onChange={() => setTasks((p) => toggleTask(p, t.id))}
+                />
+                <span>{t.title}</span>
+                {t.dueDate && (
+                  <span className="due-date">
+                    Due {t.dueDate}
+                    {overdue && ' (Overdue)'}
+                  </span>
+                )}
+              </label>
+              <button
+                className="delete"
+                aria-label={`Delete ${t.title}`}
+                onClick={() => setTasks((p) => deleteTask(p, t.id))}
+              >
+                ×
+              </button>
+            </li>
+          );
+        })}
         {visible.length === 0 && <li className="empty">Nothing here yet.</li>}
       </ul>
 

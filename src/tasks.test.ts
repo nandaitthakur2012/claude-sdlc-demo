@@ -1,4 +1,4 @@
-import { addTask, clearCompleted,countRemaining, deleteTask, filterTasks, toggleTask, type Task } from './tasks';
+import { isOverdue, addTask, clearCompleted,countRemaining, deleteTask, filterTasks, toggleTask, type Task } from './tasks';
 
 const sample: Task[] = [
   { id: 'a', title: 'Write code', done: false, createdAt: 1 },
@@ -51,5 +51,31 @@ describe('clearCompleted', () => {
     const copy = JSON.parse(JSON.stringify(sample));
     clearCompleted(sample);
     expect(sample).toEqual(copy);
+  });
+});
+
+describe('due dates', () => {
+  const today = new Date(2026, 5, 15);
+  const mk = (over: Partial<Task>): Task => ({ id: 'x', title: 't', done: false, createdAt: 1, ...over });
+
+  it('stores due date and defaults to null', () => {
+    expect(addTask([], 'a', '2026-12-01')[0].dueDate).toBe('2026-12-01');
+    expect(addTask([], 'a', '')[0].dueDate).toBeNull();
+    expect(addTask([], 'a')[0].dueDate).toBeNull();
+  });
+
+  it('flags only unfinished past-due tasks', () => {
+    expect(isOverdue(mk({ dueDate: '2026-06-14' }), today)).toBe(true);
+    expect(isOverdue(mk({ dueDate: '2026-06-14', done: true }), today)).toBe(false);
+    expect(isOverdue(mk({ dueDate: '2026-06-15' }), today)).toBe(false);
+    expect(isOverdue(mk({ dueDate: '2026-06-16' }), today)).toBe(false);
+    expect(isOverdue(mk({}), today)).toBe(false);
+  });
+
+  it('does not mutate inputs', () => {
+    const t = mk({ dueDate: '2026-06-14' });
+    const copy = { ...t };
+    isOverdue(t, today);
+    expect(t).toEqual(copy);
   });
 });
