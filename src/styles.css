@@ -42,5 +42,22 @@ button {
 .task-list label { display: flex; gap: 10px; align-items: center; }
 .task-list .empty { color: var(--muted); justify-content: center; }
 .delete { border: none; font-size: 18px; color: var(--muted); }
-footer { margin-top: 16px; color: var(--muted); font-size: 14px; }
+footer {
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.clear-completed {
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--card);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.clear-completed:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
 @media (max-width: 600px) { .app { margin: 0; border-radius: 0; } }
