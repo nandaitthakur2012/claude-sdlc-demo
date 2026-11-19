@@ -5,7 +5,10 @@ const KEY = 'taskflow.tasks';
 export function loadTasks(): Task[] {
   try {
     const raw = localStorage.getItem(KEY);
-    return raw ? (JSON.parse(raw) as Task[]) : [];
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return (parsed as Task[]).map((t) => ({ ...t, dueDate: t.dueDate ?? null }));
   } catch {
     return [];
   }
