@@ -1,4 +1,4 @@
-import { addTask, countRemaining, deleteTask, filterTasks, toggleTask, type Task } from './tasks';
+import { addTask, clearCompleted,countRemaining, deleteTask, filterTasks, toggleTask, type Task } from './tasks';
 
 const sample: Task[] = [
   { id: 'a', title: 'Write code', done: false, createdAt: 1 },
@@ -33,5 +33,23 @@ describe('tasks', () => {
 
   it('counts remaining tasks', () => {
     expect(countRemaining(sample)).toBe(1);
+  });
+});
+
+describe('clearCompleted', () => {
+  it('removes done tasks and keeps active ones', () => {
+    expect(clearCompleted(sample)).toEqual([sample[0]]);
+  });
+  it('returns empty when all done', () => {
+    expect(clearCompleted(sample.map((t) => ({ ...t, done: true })))).toEqual([]);
+  });
+  it('returns equal array when none done', () => {
+    const active = sample.map((t) => ({ ...t, done: false }));
+    expect(clearCompleted(active)).toEqual(active);
+  });
+  it('does not mutate its input', () => {
+    const copy = JSON.parse(JSON.stringify(sample));
+    clearCompleted(sample);
+    expect(sample).toEqual(copy);
   });
 });

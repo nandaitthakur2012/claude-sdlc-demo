@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
   addTask,
+  clearCompleted,
   countRemaining,
   deleteTask,
   filterTasks,
@@ -27,6 +28,7 @@ export default function App() {
 
   const visible = filterTasks(tasks, filter);
   const remaining = countRemaining(tasks);
+  const completed = tasks.length - remaining;
 
   return (
     <main className="app">
@@ -82,7 +84,16 @@ export default function App() {
       </ul>
 
       <footer>
-        {remaining} {remaining === 1 ? 'task' : 'tasks'} remaining
+        <span>
+          {remaining} {remaining === 1 ? 'task' : 'tasks'} remaining
+        </span>
+        <button
+          className="clear-completed"
+          disabled={completed === 0}
+          onClick={() => setTasks((p) => clearCompleted(p))}
+        >
+          Clear completed
+        </button>
       </footer>
     </main>
   );

@@ -37,6 +37,10 @@ export function filterTasks(tasks: Task[], filter: Filter): Task[] {
   return tasks;
 }
 
+export function clearCompleted(tasks: Task[]): Task[] {
+  return tasks.filter((t) => !t.done);
+}
+
 export function countRemaining(tasks: Task[]): number {
   return tasks.filter((t) => !t.done).length;
 }
