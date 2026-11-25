@@ -16,6 +16,9 @@ on:
 jobs:
   review:
     name: Claude reviews the PR
+    # PRs opened by the SDLC pipeline are already reviewed by it (via workflow_call),
+    # so skip the duplicate pull_request-triggered run for bot-authored PRs.
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     permissions:
       contents: read
