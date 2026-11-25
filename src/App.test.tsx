@@ -2,7 +2,61 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from './App';
 
-beforeEach(() => localStorage.clear());
+function mockMatchMedia(dark: boolean) {
+  window.matchMedia = ((query: string) => ({
+    matches: dark && query.includes('dark'),
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  delete document.documentElement.dataset.theme;
+  mockMatchMedia(false);
+});
+
+describe('theme toggle', () => {
+  it('toggles theme, updates data-theme and persists', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    const btn = screen.getByRole('button', { name: 'Dark mode' });
+    expect(btn).toHaveAttribute('aria-pressed', 'false');
+    expect(document.documentElement.dataset.theme).toBe('light');
+
+    await user.click(btn);
+    expect(btn).toHaveAttribute('aria-pressed', 'true');
+    expect(document.documentElement.dataset.theme).toBe('dark');
+    expect(localStorage.getItem('taskflow.theme')).toBe('dark');
+  });
+
+  it('restores saved theme over OS preference', () => {
+    localStorage.setItem('taskflow.theme', 'light');
+    mockMatchMedia(true);
+    render(<App />);
+    expect(screen.getByRole('button', { name: 'Dark mode' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('defaults to OS dark preference', () => {
+    mockMatchMedia(true);
+    render(<App />);
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('falls back to OS preference on invalid saved value', () => {
+    localStorage.setItem('taskflow.theme', 'purple');
+    mockMatchMedia(true);
+    render(<App />);
+    expect(document.documentElement.dataset.theme).toBe('dark');
+  });
+
+  it('falls back to light when matchMedia is unavailable', () => {
+    Object.defineProperty(window, 'matchMedia', { value: undefined, configurable: true, writable: true });
+    render(<App />);
+    expect(document.documentElement.dataset.theme).toBe('light');
+  });
+});
 
 describe('App', () => {
   it('adds, completes and deletes a task', async () => {

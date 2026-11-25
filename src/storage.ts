@@ -21,3 +21,24 @@ export function saveTasks(tasks: Task[]): void {
     // storage unavailable (private mode etc.) — app still works in memory
   }
 }
+
+export type Theme = 'light' | 'dark';
+
+const THEME_KEY = 'taskflow.theme';
+
+export function loadTheme(): Theme | null {
+  try {
+    const raw = localStorage.getItem(THEME_KEY);
+    return raw === 'light' || raw === 'dark' ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveTheme(theme: Theme): void {
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // storage unavailable: theme still applies for this session
+  }
+}
