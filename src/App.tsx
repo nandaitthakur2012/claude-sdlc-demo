@@ -10,9 +10,25 @@ import {
   type Filter,
   type Task,
 } from './tasks';
-import { loadTasks, saveTasks } from './storage';
+import { loadTasks, loadTheme, saveTasks, saveTheme, type Theme } from './storage';
 
 const FILTERS: Filter[] = ['all', 'active', 'done'];
+
+function initialTheme(): Theme {
+  const saved = loadTheme();
+  if (saved) return saved;
+  try {
+    if (
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    ) {
+      return 'dark';
+    }
+  } catch {
+    // fall through to light
+  }
+  return 'light';
+}
 
 export default function App() {
   const [tasks, setTasks] = useState<Task[]>(() => loadTasks());
@@ -20,7 +36,14 @@ export default function App() {
   const [dueDate, setDueDate] = useState('');
   const [filter, setFilter] = useState<Filter>('all');
 
+  const [theme, setTheme] = useState<Theme>(() => initialTheme());
+
   useEffect(() => saveTasks(tasks), [tasks]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    saveTheme(theme);
+  }, [theme]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -36,7 +59,16 @@ export default function App() {
   return (
     <main className="app">
       <header>
-        <h1>TaskFlow</h1>
+        <div className="header-row">
+          <h1>TaskFlow</h1>
+          <button
+            className="theme-toggle"
+            aria-pressed={theme === 'dark'}
+            onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
+          >
+            Dark mode
+          </button>
+        </div>
         <p className="subtitle">Built and shipped by Claude + GitHub Actions</p>
       </header>
 
